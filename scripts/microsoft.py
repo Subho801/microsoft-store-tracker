@@ -84,7 +84,7 @@ def main():
                 "image": get_image(item),
                 "price": "Free",
                 "discount": "-100%" if cut == 100 else "",
-                "source": "IsThereAnyDeal API",
+                "source": "IsThereAnyDeal",
             })
 
         if not data.get("hasMore"):
