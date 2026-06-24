@@ -22,18 +22,10 @@ jobs:
       - name: Install packages
         run: pip install -r requirements.txt
 
-      - name: Install Playwright Chromium
-        run: python -m playwright install chromium
-
       - name: Run Microsoft Store tracker
+        env:
+          ITAD_API_KEY: ${{ secrets.ITAD_API_KEY }}
         run: python scripts/microsoft.py
-
-      - name: Upload debug screenshot
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: microsoft-debug
-          path: microsoft-debug.png
 
       - name: Commit JSON
         run: |
