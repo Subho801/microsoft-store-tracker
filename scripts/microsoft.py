@@ -1,121 +1,111 @@
 import json
-import re
+import os
 from datetime import datetime, timezone
 
-from playwright.sync_api import sync_playwright
+import requests
 
-URL = "https://isthereanydeal.com/deals/#filter:N4IgzgFgg9gDmIC4DaAWAHAXQL5A;sort:price"
+API_KEY = os.getenv("ITAD_API_KEY", "")
+COUNTRY = "IN"
+OUTPUT_FILE = "data/microsoft-store.json"
+
+# We will auto-detect the Microsoft Store shop id first.
+SHOPS_MAP_URL = "https://api.isthereanydeal.com/service/shops/map/v1"
+DEALS_URL = "https://api.isthereanydeal.com/deals/v2"
 
 
-def clean(text):
-    return re.sub(r"\s+", " ", text or "").strip()
+def get_microsoft_shop_id():
+    res = requests.get(
+        SHOPS_MAP_URL,
+        params={"key": API_KEY},
+        timeout=30,
+    )
+    res.raise_for_status()
+
+    shops = res.json()
+
+    for shop in shops:
+        name = str(shop.get("name", "")).lower()
+        title = str(shop.get("title", "")).lower()
+
+        if "microsoft" in name or "microsoft" in title:
+            return shop.get("id")
+
+    raise RuntimeError("Microsoft Store shop id not found in ITAD shops map")
 
 
-def is_free(text):
-    t = text.lower()
+def get_image(game):
+    assets = game.get("assets") or {}
     return (
-        "₹0.00" in text
-        or "$0.00" in text
-        or "€0.00" in text
-        or "£0.00" in text
-        or "-100%" in text
-        or "100%" in text
+        assets.get("banner600")
+        or assets.get("banner300")
+        or assets.get("banner145")
+        or assets.get("boxart")
+        or ""
     )
 
 
-items = []
+def main():
+    if not API_KEY:
+        raise RuntimeError("Missing ITAD_API_KEY GitHub secret")
 
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
-    page = browser.new_page(viewport={"width": 1440, "height": 2400})
+    microsoft_shop_id = get_microsoft_shop_id()
+    print(f"Microsoft Store shop id: {microsoft_shop_id}")
 
-    page.goto(URL, wait_until="networkidle", timeout=90000)
-    page.wait_for_timeout(10000)
-
-    for _ in range(8):
-        page.mouse.wheel(0, 1400)
-        page.wait_for_timeout(800)
-
-    page.screenshot(path="microsoft-debug.png", full_page=True)
-
-    deals = page.evaluate("""
-    () => {
-      const results = [];
-
-      const rows = [...document.querySelectorAll("div, tr, article")]
-        .filter(el => {
-          const text = el.innerText || "";
-          return (
-            text.includes("Microsoft Store") &&
-            (
-              text.includes("₹0.00") ||
-              text.includes("$0.00") ||
-              text.includes("€0.00") ||
-              text.includes("£0.00") ||
-              text.includes("-100%")
-            )
-          );
-        });
-
-      for (const row of rows) {
-        const text = row.innerText || "";
-        const img = row.querySelector("img");
-
-        const lines = text
-          .split("\\n")
-          .map(x => x.trim())
-          .filter(Boolean);
-
-        const title = lines.find(line =>
-          line.length > 2 &&
-          line.length < 120 &&
-          !line.includes("Microsoft Store") &&
-          !line.includes("₹") &&
-          !line.includes("$") &&
-          !line.includes("€") &&
-          !line.includes("£") &&
-          !line.includes("%") &&
-          !line.toLowerCase().includes("shop") &&
-          !line.toLowerCase().includes("current deals") &&
-          !line.toLowerCase().includes("all games")
-        );
-
-        const price =
-          lines.find(line =>
-            line.includes("₹0.00") ||
-            line.includes("$0.00") ||
-            line.includes("€0.00") ||
-            line.includes("£0.00")
-          ) || "Free";
-
-        const discount =
-          lines.find(line => line.includes("-100%")) || "-100%";
-
-        if (title) {
-          results.push({
-            title,
-            image: img ? img.src : "",
-            price,
-            discount,
-            rawText: text
-          });
-        }
-      }
-
-      return results;
+    payload = {
+        "country": COUNTRY,
+        "sort": "price",
+        "limit": 200,
+        "shops": [microsoft_shop_id],
+        "filter": {
+            "price": {
+                "max": 0
+            }
+        },
     }
-    """)
 
+    res = requests.post(
+        DEALS_URL,
+        params={"key": API_KEY},
+        json=payload,
+        timeout=30,
+    )
+    res.raise_for_status()
+
+    data = res.json()
+
+    items = []
     seen = set()
 
+    # ITAD can return either a list or an object depending on endpoint version.
+    deals = data if isinstance(data, list) else data.get("list", data.get("deals", []))
+
     for deal in deals:
-        title = clean(deal.get("title", ""))
-        raw_text = clean(deal.get("rawText", ""))
+        game = deal.get("game") or deal
+
+        title = (
+            game.get("title")
+            or game.get("name")
+            or deal.get("title")
+            or deal.get("name")
+            or ""
+        ).strip()
 
         if not title:
             continue
 
-        if not is_free(raw_text):
+        price_data = deal.get("price") or deal.get("current") or {}
+        price_amount = price_data.get("amount", None)
+        price_int = price_data.get("amountInt", None)
+
+        cut = deal.get("cut", 0)
+
+        is_free = (
+            price_amount == 0
+            or price_int == 0
+            or cut == 100
+        )
+
+        if not is_free:
             continue
 
         key = title.lower()
@@ -124,27 +114,30 @@ with sync_playwright() as p:
 
         seen.add(key)
 
-        items.append({
-            "title": title,
-            "platform": "Microsoft Store",
-            "status": "free",
-            "url": URL,
-            "image": deal.get("image", "").replace("banner145.jpg", "banner300.jpg"),
-            "price": clean(deal.get("price", "Free")),
-            "discount": clean(deal.get("discount", "-100%")),
-            "source": "IsThereAnyDeal",
-        })
+        items.append(
+            {
+                "title": title,
+                "platform": "Microsoft Store",
+                "status": "free",
+                "url": deal.get("url") or "",
+                "image": get_image(game),
+                "price": "Free",
+                "discount": "-100%",
+                "source": "IsThereAnyDeal API",
+            }
+        )
 
-    browser.close()
+    output = {
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+        "count": len(items),
+        "items": items,
+    }
+
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        json.dump(output, f, indent=2, ensure_ascii=False)
+
+    print(f"Saved {len(items)} Microsoft Store freebies")
 
 
-output = {
-    "updatedAt": datetime.now(timezone.utc).isoformat(),
-    "count": len(items),
-    "items": items,
-}
-
-with open("data/microsoft-store.json", "w", encoding="utf-8") as f:
-    json.dump(output, f, indent=2, ensure_ascii=False)
-
-print(f"Saved {len(items)} Microsoft Store freebies")
+if __name__ == "__main__":
+    main()
