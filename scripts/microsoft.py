@@ -6,104 +6,54 @@ import requests
 
 API_KEY = os.getenv("ITAD_API_KEY", "")
 COUNTRY = "IN"
+MICROSOFT_SHOP_ID = 48
+
 OUTPUT_FILE = "data/microsoft-store.json"
-
-# We will auto-detect the Microsoft Store shop id first.
-SHOPS_MAP_URL = "https://api.isthereanydeal.com/service/shops/map/v1"
 DEALS_URL = "https://api.isthereanydeal.com/deals/v2"
-
-
-def get_microsoft_shop_id():
-    res = requests.get(
-        SHOPS_MAP_URL,
-        params={"key": API_KEY},
-        timeout=30,
-    )
-    res.raise_for_status()
-
-    shops = res.json()
-
-    for shop in shops:
-        name = str(shop.get("name", "")).lower()
-        title = str(shop.get("title", "")).lower()
-
-        if "microsoft" in name or "microsoft" in title:
-            return shop.get("id")
-
-    raise RuntimeError("Microsoft Store shop id not found in ITAD shops map")
-
-
-def get_image(game):
-    assets = game.get("assets") or {}
-    return (
-        assets.get("banner600")
-        or assets.get("banner300")
-        or assets.get("banner145")
-        or assets.get("boxart")
-        or ""
-    )
 
 
 def main():
     if not API_KEY:
-        raise RuntimeError("Missing ITAD_API_KEY GitHub secret")
+        raise RuntimeError("Missing ITAD_API_KEY secret")
 
-    microsoft_shop_id = get_microsoft_shop_id()
-    print(f"Microsoft Store shop id: {microsoft_shop_id}")
-
-    payload = {
+    params = {
+        "key": API_KEY,
         "country": COUNTRY,
-        "sort": "price",
-        "limit": 200,
-        "shops": [microsoft_shop_id],
-        "filter": {
-            "price": {
-                "max": 0
-            }
-        },
+        "shops": str(MICROSOFT_SHOP_ID),
     }
 
-    res = requests.post(
-        DEALS_URL,
-        params={"key": API_KEY},
-        json=payload,
-        timeout=30,
-    )
+    res = requests.get(DEALS_URL, params=params, timeout=30)
     res.raise_for_status()
 
     data = res.json()
 
+    print("API returned keys:", data.keys())
+    print("Has more:", data.get("hasMore"))
+    print("Next offset:", data.get("nextOffset"))
+
+    deals = data.get("list", [])
+
     items = []
     seen = set()
 
-    # ITAD can return either a list or an object depending on endpoint version.
-    deals = data if isinstance(data, list) else data.get("list", data.get("deals", []))
+    for item in deals:
+        deal = item.get("deal", {})
+        shop = deal.get("shop", {})
+        price = deal.get("price", {})
 
-    for deal in deals:
-        game = deal.get("game") or deal
-
-        title = (
-            game.get("title")
-            or game.get("name")
-            or deal.get("title")
-            or deal.get("name")
-            or ""
-        ).strip()
-
-        if not title:
-            continue
-
-        price_data = deal.get("price") or deal.get("current") or {}
-        price_amount = price_data.get("amount", None)
-        price_int = price_data.get("amountInt", None)
-
+        shop_id = shop.get("id")
+        amount = price.get("amount")
+        amount_int = price.get("amountInt")
         cut = deal.get("cut", 0)
 
-        is_free = (
-            price_amount == 0
-            or price_int == 0
-            or cut == 100
-        )
+        title = item.get("title", "").strip()
+
+        print("DEAL:", title, "| shop:", shop_id, "| price:", amount, "| cut:", cut)
+
+        if shop_id != MICROSOFT_SHOP_ID:
+            continue
+
+        is_free = amount == 0 or amount_int == 0 or cut == 100
 
         if not is_free:
             continue
@@ -114,15 +64,25 @@ def main():
 
         seen.add(key)
 
+        assets = item.get("assets", {})
+        image = (
+            assets.get("banner600")
+            or assets.get("banner400")
+            or assets.get("banner300")
+            or assets.get("banner145")
+            or assets.get("boxart")
+            or ""
+        )
+
         items.append(
             {
                 "title": title,
                 "platform": "Microsoft Store",
                 "status": "free",
-                "url": deal.get("url") or "",
-                "image": get_image(game),
+                "url": item.get("url") or deal.get("url") or "https://www.microsoft.com/store",
+                "image": image,
                 "price": "Free",
-                "discount": "-100%",
+                "discount": "-100%" if cut == 100 else "",
                 "source": "IsThereAnyDeal API",
             }
         )
