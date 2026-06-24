@@ -1,5 +1,16 @@
 {
-  "updatedAt": "2026-06-24T17:09:14.849545+00:00",
-  "count": 0,
-  "items": []
+  "updatedAt": "2026-06-24T17:12:55.792421+00:00",
+  "count": 1,
+  "items": [
+    {
+      "title": "Tell Me Why",
+      "platform": "Microsoft Store",
+      "status": "free",
+      "url": "https://itad.link/018d9386-dbf4-72d9-984a-870f9b53820b/",
+      "image": "https://assets.isthereanydeal.com/018d937f-43cf-721a-a4c3-74642d9c11df/banner600.jpg?t=1780351207",
+      "price": "Free",
+      "discount": "-100%",
+      "source": "IsThereAnyDeal API"
+    }
+  ]
 }
