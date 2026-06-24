@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from playwright.sync_api import sync_playwright
 
-URL = "https://isthereanydeal.com/deals/#/filter:stores/48"
+URL = "https://isthereanydeal.com/deals/#filter:N4IgzgFgg9gDmIC4DaAWAHAXQL5A;sort:price"
 
 
 def clean(text):
